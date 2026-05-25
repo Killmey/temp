@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 
 // FIX 3: namespace змінено з ClickerApp на ClickerApp (узгоджено з x:Class у XAML)
@@ -39,7 +40,7 @@ namespace ClickerApp
 
         // ─── Змінні клікера ──────────────────────────────────────────────────
         private bool isRunning = false;
-        private Thread clickThread;
+        private Thread? clickThread;
         private Random rng = new Random();
 
         // Хоткей за замовчуванням: Ctrl (0x0002) + Z (0x5A)
