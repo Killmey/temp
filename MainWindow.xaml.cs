@@ -20,6 +20,8 @@ namespace ClickerApp
         [DllImport("user32.dll")] static extern uint SendInput(uint nInputs, INPUT[] inputs, int size);
         [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint vk);
         [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+        [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint period);
+        [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint period);
 
         [StructLayout(LayoutKind.Sequential)]
         struct INPUT { public uint type; public UNION input; }
@@ -52,6 +54,7 @@ namespace ClickerApp
         IntPtr windowHandle;
         bool initialized;
         bool recording;
+        bool highResolutionTimer;
 
         int cps = 100;
         bool clickLmb;
@@ -167,6 +170,7 @@ namespace ClickerApp
             SetMouseMode(clickLmb, save: false);
             TxtHotkey.Text = HotkeyText();
             UpdateAntiUi();
+            UpdateMiniUi();
             SetUi(running);
         }
 
@@ -201,6 +205,7 @@ namespace ClickerApp
             Resources["ControlFontSize"] = (double)fontSize;
             SetMouseMode(BtnLmb.IsChecked == true, save: false);
             UpdateAntiUi();
+            UpdateMiniUi();
             SetUi(running);
         }
 
@@ -226,6 +231,8 @@ namespace ClickerApp
 
         void Loop()
         {
+            var nextTick = Stopwatch.GetTimestamp();
+
             while (running)
             {
                 int localCps, localJitter, localBurstChance, localBurstMs, localHoldMs;
@@ -241,7 +248,6 @@ namespace ClickerApp
                     localHoldMs = holdMs;
                 }
 
-                var sw = Stopwatch.StartNew();
                 var interval = 1.0 / localCps;
                 if (localAnti)
                 {
@@ -249,6 +255,7 @@ namespace ClickerApp
                     interval = Math.Max(0.0001, interval + (rng.NextDouble() * 2 - 1) * spread * interval);
                 }
 
+                var started = Stopwatch.GetTimestamp();
                 Click(localLmb ? LeftDown : RightDown);
                 if (localAnti && localHoldMs > 0)
                     PreciseSleep(rng.NextDouble() * localHoldMs / 1000.0);
@@ -257,8 +264,9 @@ namespace ClickerApp
                 if (localAnti && rng.Next(1, 101) <= localBurstChance)
                     PreciseSleep(localBurstMs / 1000.0);
 
-                var left = interval - sw.Elapsed.TotalSeconds;
-                if (left > 0) PreciseSleep(left);
+                var intervalTicks = Math.Max(1, (long)(interval * Stopwatch.Frequency));
+                nextTick = Math.Max(nextTick + intervalTicks, started + intervalTicks);
+                PreciseSleepUntil(nextTick);
             }
         }
 
@@ -273,11 +281,23 @@ namespace ClickerApp
         static void PreciseSleep(double seconds)
         {
             if (seconds <= 0) return;
-            var ticks = (long)(seconds * Stopwatch.Frequency);
-            var start = Stopwatch.GetTimestamp();
-            if (seconds > 0.002)
-                Thread.Sleep((int)((seconds - 0.002) * 1000));
-            while (Stopwatch.GetTimestamp() - start < ticks) { }
+            PreciseSleepUntil(Stopwatch.GetTimestamp() + (long)(seconds * Stopwatch.Frequency));
+        }
+
+        static void PreciseSleepUntil(long targetTick)
+        {
+            while (true)
+            {
+                var remaining = (targetTick - Stopwatch.GetTimestamp()) / (double)Stopwatch.Frequency;
+                if (remaining <= 0) return;
+
+                if (remaining > 0.006)
+                    Thread.Sleep(Math.Max(1, (int)(remaining * 1000) - 2));
+                else if (remaining > 0.0015)
+                    Thread.Sleep(0);
+                else
+                    Thread.SpinWait(80);
+            }
         }
 
         void Start()
@@ -285,6 +305,7 @@ namespace ClickerApp
             if (running) return;
             TxtCps_LostFocus(this, new RoutedEventArgs());
             RefreshRuntimeState();
+            EnableHighResolutionTimer();
             running = true;
             SetUi(true);
             clickThread = new Thread(Loop) { IsBackground = true, Priority = ThreadPriority.Highest };
@@ -295,6 +316,7 @@ namespace ClickerApp
         {
             if (!running) return;
             running = false;
+            DisableHighResolutionTimer();
             SetUi(false);
         }
 
@@ -319,6 +341,20 @@ namespace ClickerApp
             BtnStart.Foreground = BgBrush;
             BtnStop.Background = on ? DangerBrush : LineBrush;
             BtnStop.Foreground = on ? BgBrush : DangerBrush;
+        }
+
+        void EnableHighResolutionTimer()
+        {
+            if (highResolutionTimer) return;
+            if (timeBeginPeriod(1) == 0)
+                highResolutionTimer = true;
+        }
+
+        void DisableHighResolutionTimer()
+        {
+            if (!highResolutionTimer) return;
+            timeEndPeriod(1);
+            highResolutionTimer = false;
         }
 
         void RegisterCurrentHotkey()
@@ -364,6 +400,7 @@ namespace ClickerApp
             BtnRecord.Foreground = TextBrush;
             TxtHotkey.Text = HotkeyText();
             TxtHotkey.Foreground = AccentBrush;
+            UpdateMiniUi();
             RegisterCurrentHotkey();
         }
 
@@ -398,6 +435,7 @@ namespace ClickerApp
             BtnRecord.Foreground = TextBrush;
             TxtHotkey.Text = HotkeyText();
             TxtHotkey.Foreground = AccentBrush;
+            UpdateMiniUi();
             RegisterCurrentHotkey();
             SaveConfig();
         }
@@ -451,6 +489,7 @@ namespace ClickerApp
             BtnRmb.Foreground = lmb ? MutedBrush : BgBrush;
 
             lock (stateLock) clickLmb = lmb;
+            UpdateMiniUi();
             if (save && initialized) SaveConfig();
         }
 
@@ -460,8 +499,20 @@ namespace ClickerApp
             BtnAntiToggle.Content = on ? "ВКЛ" : "ВИКЛ";
             BtnAntiToggle.Background = on ? AccentBrush : LineBrush;
             BtnAntiToggle.Foreground = on ? BgBrush : MutedBrush;
-            TxtAntiSummary.Text = $"Jitter {jitter}% / пауза {burstChance}% на {burstMs} мс / hold {holdMs} мс";
+            TxtAntiSummary.Text = on ? "Активна рандомізація" : "Вимкнено";
             lock (stateLock) antiOn = on;
+        }
+
+        void UpdateMiniUi()
+        {
+            if (MiniMode == null || MiniCps == null || MiniHotkey == null) return;
+
+            MiniMode.Text = BtnLmb?.IsChecked == true ? "ЛКМ" : "ПКМ";
+            MiniCps.Text = $"{Math.Max(1, cps)} CPS";
+            MiniHotkey.Text = HotkeyText();
+            MiniMode.Foreground = AccentBrush;
+            MiniCps.Foreground = TextBrush;
+            MiniHotkey.Foreground = MutedBrush;
         }
 
         Window CreatePopup(string title, double width)
@@ -481,6 +532,7 @@ namespace ClickerApp
 
             var border = new Border
             {
+                Tag = "PopupRoot",
                 Background = BgBrush,
                 BorderBrush = LineBrush,
                 BorderThickness = new Thickness(1),
@@ -495,6 +547,7 @@ namespace ClickerApp
 
             header.Children.Add(new TextBlock
             {
+                Tag = "AccentText",
                 Text = title,
                 Foreground = AccentBrush,
                 FontFamily = new FontFamily("Consolas"),
@@ -505,6 +558,7 @@ namespace ClickerApp
 
             var close = new Button
             {
+                Tag = "ChromeButton",
                 Content = "x",
                 Width = 30,
                 Height = 30,
@@ -528,6 +582,58 @@ namespace ClickerApp
                 try { win.DragMove(); } catch { }
             };
             return win;
+        }
+
+        void RefreshPopupTheme(DependencyObject? root)
+        {
+            if (root == null) return;
+
+            if (root is FrameworkElement element && element.Tag is string tag)
+            {
+                switch (tag)
+                {
+                    case "PopupRoot" when root is Border popup:
+                        popup.Background = BgBrush;
+                        popup.BorderBrush = LineBrush;
+                        break;
+                    case "AccentText" when root is TextBlock accent:
+                        accent.Foreground = AccentBrush;
+                        accent.FontSize = fontSize + 7;
+                        break;
+                    case "Text" when root is TextBlock text:
+                        text.Foreground = TextBrush;
+                        text.FontSize = fontSize;
+                        break;
+                    case "Muted" when root is TextBlock muted:
+                        muted.Foreground = MutedBrush;
+                        muted.FontSize = Math.Max(9, fontSize - 2);
+                        break;
+                    case "Line" when root is Border line:
+                        line.Background = LineBrush;
+                        break;
+                    case "Input" when root is TextBox input:
+                        input.Background = SurfaceBrush;
+                        input.Foreground = AccentBrush;
+                        input.BorderBrush = LineBrush;
+                        input.CaretBrush = AccentBrush;
+                        break;
+                    case "ChromeButton" when root is Button chrome:
+                        chrome.Foreground = MutedBrush;
+                        break;
+                    case "DialogPrimary" when root is Button primary:
+                        primary.Background = SurfaceBrush;
+                        primary.Foreground = TextBrush;
+                        break;
+                    case "DialogSecondary" when root is Button secondary:
+                        secondary.Background = LineBrush;
+                        secondary.Foreground = MutedBrush;
+                        break;
+                }
+            }
+
+            var count = VisualTreeHelper.GetChildrenCount(root);
+            for (var i = 0; i < count; i++)
+                RefreshPopupTheme(VisualTreeHelper.GetChild(root, i));
         }
 
         StackPanel PopupRoot(Window win) =>
@@ -567,7 +673,7 @@ namespace ClickerApp
 
             AddDivider(root);
             AddSliderRow(root, "Розмір шрифту", "Застосовується одразу до елементів керування", 9, 18, fontSize, "",
-                value => { fontSize = value; ApplyTheme(); SaveConfig(); });
+                value => { fontSize = value; ApplyTheme(); RefreshPopupTheme(win); SaveConfig(); });
 
             var buttons = new Grid { Margin = new Thickness(0, 12, 0, 0) };
             buttons.ColumnDefinitions.Add(new ColumnDefinition());
@@ -579,13 +685,16 @@ namespace ClickerApp
                 theme = new ThemeConfig();
                 fontSize = 13;
                 ApplyTheme();
+                RefreshPopupTheme(win);
                 SaveConfig();
                 win.Close();
             };
+            reset.Tag = "DialogSecondary";
             buttons.Children.Add(reset);
 
             var close = DialogButton("ГОТОВО", SurfaceBrush, TextBrush);
             close.Click += (_, _) => win.Close();
+            close.Tag = "DialogPrimary";
             Grid.SetColumn(close, 1);
             close.Margin = new Thickness(8, 0, 0, 0);
             buttons.Children.Add(close);
@@ -607,7 +716,7 @@ namespace ClickerApp
         };
 
         void AddDivider(Panel root) =>
-            root.Children.Add(new Border { Height = 1, Background = LineBrush, Margin = new Thickness(0, 10, 0, 10) });
+            root.Children.Add(new Border { Tag = "Line", Height = 1, Background = LineBrush, Margin = new Thickness(0, 10, 0, 10) });
 
         void AddColorRow(Panel root, string label, string color, Action<string> apply)
         {
@@ -617,6 +726,7 @@ namespace ClickerApp
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             row.Children.Add(new TextBlock
             {
+                Tag = "Text",
                 Text = label,
                 Foreground = TextBrush,
                 FontSize = fontSize,
@@ -646,6 +756,7 @@ namespace ClickerApp
                 apply(next);
                 swatch.Background = BrushOf(next);
                 ApplyTheme();
+                RefreshPopupTheme(Window.GetWindow(swatch));
                 SaveConfig();
             };
 
@@ -659,6 +770,7 @@ namespace ClickerApp
             var wrap = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
             wrap.Children.Add(new TextBlock
             {
+                Tag = "Text",
                 Text = title,
                 Foreground = TextBrush,
                 FontSize = fontSize,
@@ -666,6 +778,7 @@ namespace ClickerApp
             });
             wrap.Children.Add(new TextBlock
             {
+                Tag = "Muted",
                 Text = subtitle,
                 Foreground = MutedBrush,
                 FontSize = Math.Max(9, fontSize - 2),
@@ -691,6 +804,7 @@ namespace ClickerApp
 
             var box = new TextBox
             {
+                Tag = "Input",
                 Text = value.ToString(Invariant),
                 Width = 58,
                 Height = 28,
@@ -708,6 +822,7 @@ namespace ClickerApp
 
             var unit = new TextBlock
             {
+                Tag = "Muted",
                 Text = suffix,
                 Foreground = MutedBrush,
                 Margin = new Thickness(6, 0, 0, 0),
@@ -766,6 +881,7 @@ namespace ClickerApp
                 value = 100;
             TxtCps.Text = value.ToString(Invariant);
             lock (stateLock) cps = value;
+            UpdateMiniUi();
             if (initialized) SaveConfig();
         }
 
