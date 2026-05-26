@@ -1,118 +1,243 @@
 <Window x:Class="ClickerApp.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="CLICKER" Height="620" Width="400"
-        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
-        WindowStartupLocation="CenterScreen" MouseDown="Window_MouseDown">
+        Title="CLICKER"
+        Height="600" Width="380"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        Background="#0D0D0D"
+        WindowStartupLocation="CenterScreen"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown">
 
     <Window.Resources>
-        <Style x:Key="CardStyle" TargetType="Border">
-            <Setter Property="Background" Value="#1A1A1A"/>
-            <Setter Property="CornerRadius" Value="12"/>
-            <Setter Property="Padding" Value="15,10"/>
-            <Setter Property="Margin" Value="20,5"/>
+        <!-- Кнопки головні -->
+        <Style x:Key="MainBtn" TargetType="Button">
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Height" Value="44"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
-        <Style x:Key="HeaderLabel" TargetType="Label">
+
+        <!-- ToggleButton -->
+        <Style x:Key="TogBtn" TargetType="ToggleButton">
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Label мітки секцій -->
+        <Style x:Key="SectionLbl" TargetType="TextBlock">
             <Setter Property="Foreground" Value="#555555"/>
             <Setter Property="FontFamily" Value="Consolas"/>
-            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontSize" Value="10"/>
             <Setter Property="FontWeight" Value="Bold"/>
-            <Setter Property="Margin" Value="20,8,20,2"/>
+            <Setter Property="Margin" Value="20,10,0,4"/>
         </Style>
     </Window.Resources>
 
-    <Border Background="#0D0D0D" CornerRadius="16" BorderBrush="#2A2A2A" BorderThickness="1">
-        <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="80"/>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="35"/>
-            </Grid.RowDefinitions>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="60"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="30"/>
+        </Grid.RowDefinitions>
 
-            <!-- FIX 1: Grid.Row="0" (було Grid.Row0="0") -->
-            <Grid Grid.Row="0" Margin="20,15,20,0">
-                <StackPanel VerticalAlignment="Center">
-                    <!-- FIX 2: прибрано LetterSpacing (не існує у WPF) -->
-                    <TextBlock Text="CLICKER" Foreground="#00FF88" FontFamily="Consolas" FontSize="26" FontWeight="Bold"/>
-                    <TextBlock Text="by Killmey (C# Evolved)" Foreground="#555555" FontFamily="Consolas" FontSize="11"/>
-                </StackPanel>
-
-                <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Orientation="Horizontal">
-                    <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#555555" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="StatusText" Text="IDLE" Foreground="#555555" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Margin="0,0,15,0" VerticalAlignment="Center"/>
-                    <Button Content="─" Click="Minimize_Click" Background="Transparent" Foreground="#555555" BorderThickness="0" FontFamily="Consolas" FontSize="14" Cursor="Hand" Margin="0,0,10,0"/>
-                    <Button Content="✕" Click="Close_Click" Background="Transparent" Foreground="#555555" BorderThickness="0" FontFamily="Consolas" FontSize="14" Cursor="Hand"/>
-                </StackPanel>
-            </Grid>
-
-            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Hidden">
-                <StackPanel>
-                    <Separator Background="#2A2A2A" Margin="20,5"/>
-
-                    <Label Content="КНОПКА МЫШИ" Style="{StaticResource HeaderLabel}"/>
-                    <Grid Margin="20,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <ToggleButton x:Name="BtnLmb" Content="ЛКМ" IsChecked="True" Checked="MouseMode_Changed" Height="40" Margin="0,0,5,0" Background="#00FF88" Foreground="#0D0D0D" FontFamily="Consolas" FontWeight="Bold" FontSize="14" Cursor="Hand"/>
-                        <ToggleButton x:Name="BtnRmb" Grid.Column="1" Content="ПКМ" Checked="MouseMode_Changed" Height="40" Margin="5,0,0,0" Background="#1A1A1A" Foreground="#555555" FontFamily="Consolas" FontWeight="Bold" FontSize="14" Cursor="Hand"/>
-                    </Grid>
-
-                    <Label Content="КЛИКОВ В СЕКУНДУ (CPS)" Style="{StaticResource HeaderLabel}"/>
-                    <Border Style="{StaticResource CardStyle}">
-                        <TextBox x:Name="TxtCps" Text="100" Background="Transparent" BorderThickness="0" Foreground="#00FF88" FontFamily="Consolas" FontSize="28" FontWeight="Bold" HorizontalContentAlignment="Center" LostFocus="TxtCps_LostFocus"/>
-                    </Border>
-
-                    <Label Content="АНТИВЫЯВЛЕНИЕ" Style="{StaticResource HeaderLabel}"/>
-                    <Border Style="{StaticResource CardStyle}">
-                        <StackPanel>
-                            <CheckBox x:Name="ChkAntiDetect" Content="ВКЛЮЧИТЬ АНТИ-ДЕТЕКТ" Foreground="#E0E0E0" FontFamily="Consolas" FontSize="12" Margin="0,5" Checked="AntiDetect_Toggle" Unchecked="AntiDetect_Toggle"/>
-
-                            <TextBlock Text="Разброс интервала (%)" Foreground="#555555" FontFamily="Consolas" FontSize="11" Margin="0,5,0,0"/>
-                            <Grid>
-                                <Slider x:Name="SldJitter" Minimum="0" Maximum="50" Value="10" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,0,45,0"/>
-                                <TextBlock Text="{Binding ElementName=SldJitter, Path=Value, StringFormat={}{0}%}" Foreground="#00FF88" HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" VerticalAlignment="Center"/>
-                            </Grid>
-
-                            <TextBlock Text="Шанс микро-паузы (%)" Foreground="#555555" FontFamily="Consolas" FontSize="11" Margin="0,5,0,0"/>
-                            <Grid>
-                                <Slider x:Name="SldBurstChance" Minimum="0" Maximum="30" Value="2" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,0,45,0"/>
-                                <TextBlock Text="{Binding ElementName=SldBurstChance, Path=Value, StringFormat={}{0}%}" Foreground="#00FF88" HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" VerticalAlignment="Center"/>
-                            </Grid>
-
-                            <TextBlock Text="Разброс удержания (мс)" Foreground="#555555" FontFamily="Consolas" FontSize="11" Margin="0,5,0,0"/>
-                            <Grid>
-                                <Slider x:Name="SldHold" Minimum="0" Maximum="40" Value="8" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,0,45,0"/>
-                                <TextBlock Text="{Binding ElementName=SldHold, Path=Value, StringFormat={}{0} мс}" Foreground="#00FF88" HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" VerticalAlignment="Center"/>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
-
-                    <Label Content="ГОРЯЧАЯ КЛАВИША" Style="{StaticResource HeaderLabel}"/>
-                    <Grid Margin="20,2,20,10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="100"/>
-                        </Grid.ColumnDefinitions>
-                        <Border Background="#1A1A1A" CornerRadius="8" Padding="10,0" Height="40">
-                            <TextBlock x:Name="TxtHotkey" Text="Ctrl + Z" Foreground="#00FF88" FontFamily="Consolas" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
-                        </Border>
-                        <Button x:Name="BtnRecord" Grid.Column="1" Content="ЗАПИСЬ" Click="BtnRecord_Click" Background="#2A2A2A" Foreground="#E0E0E0" BorderThickness="0" FontFamily="Consolas" FontWeight="Bold" Margin="5,0,0,0" Height="40" Cursor="Hand"/>
-                    </Grid>
-
-                    <Grid Margin="20,10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <Button x:Name="BtnStart" Content="▶ СТАРТ" Click="BtnStart_Click" Background="#00FF88" Foreground="#0D0D0D" FontFamily="Consolas" FontSize="14" FontWeight="Bold" Height="45" Margin="0,0,5,0" Cursor="Hand"/>
-                        <Button x:Name="BtnStop" Grid.Column="1" Content="■ СТОП" Click="BtnStop_Click" Background="#2A2A2A" Foreground="#FF3355" BorderThickness="0" FontFamily="Consolas" FontSize="14" FontWeight="Bold" Height="45" Margin="5,0,0,0" Cursor="Hand"/>
-                    </Grid>
-                </StackPanel>
-            </ScrollViewer>
-
-            <TextBlock Grid.Row="2" Text="SendInput  ·  WPF Windows Native" Foreground="#555555" FontFamily="Consolas" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <!-- HEADER -->
+        <Grid Grid.Row="0" Background="#111111" Margin="0,0,0,1">
+            <StackPanel VerticalAlignment="Center" Margin="20,0,0,0">
+                <TextBlock Text="CLICKER" Foreground="#00FF88"
+                           FontFamily="Consolas" FontSize="22" FontWeight="Bold"/>
+                <TextBlock Text="by Killmey" Foreground="#444444"
+                           FontFamily="Consolas" FontSize="10"/>
+            </StackPanel>
+            <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Orientation="Horizontal" Margin="0,0,15,0">
+                <Ellipse x:Name="StatusDot" Width="9" Height="9"
+                         Fill="#555555" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                <TextBlock x:Name="StatusText" Text="IDLE" Foreground="#555555"
+                           FontFamily="Consolas" FontSize="11" FontWeight="Bold"
+                           VerticalAlignment="Center" Margin="0,0,16,0"/>
+                <Button Content="─" Style="{StaticResource MainBtn}"
+                        Click="Minimize_Click" Background="Transparent"
+                        Foreground="#555555" Width="28" Height="28"/>
+                <Button Content="✕" Style="{StaticResource MainBtn}"
+                        Click="Close_Click" Background="Transparent"
+                        Foreground="#555555" Width="28" Height="28"/>
+            </StackPanel>
         </Grid>
-    </Border>
+
+        <!-- CONTENT -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Hidden"
+                      Background="#0D0D0D">
+            <StackPanel Margin="0,6,0,10">
+
+                <!-- Роздільник -->
+                <Rectangle Height="1" Fill="#1E1E1E" Margin="20,0"/>
+
+                <!-- Кнопка миші -->
+                <TextBlock Text="КНОПКА МЫШИ" Style="{StaticResource SectionLbl}"/>
+                <Grid Margin="20,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition/>
+                    </Grid.ColumnDefinitions>
+                    <ToggleButton x:Name="BtnLmb" Content="ЛКМ"
+                                  Style="{StaticResource TogBtn}"
+                                  IsChecked="True"
+                                  Checked="MouseMode_Changed"
+                                  Unchecked="MouseMode_Changed"
+                                  Background="#00FF88" Foreground="#0D0D0D"
+                                  Margin="0,0,5,0"/>
+                    <ToggleButton x:Name="BtnRmb" Grid.Column="1" Content="ПКМ"
+                                  Style="{StaticResource TogBtn}"
+                                  Checked="MouseMode_Changed"
+                                  Unchecked="MouseMode_Changed"
+                                  Background="#1A1A1A" Foreground="#555555"
+                                  Margin="5,0,0,0"/>
+                </Grid>
+
+                <!-- CPS -->
+                <TextBlock Text="КЛИКОВ В СЕКУНДУ (CPS)"
+                           Style="{StaticResource SectionLbl}"/>
+                <Border Background="#1A1A1A" CornerRadius="10"
+                        Margin="20,0" Padding="0,8">
+                    <TextBox x:Name="TxtCps" Text="100"
+                             Background="Transparent" BorderThickness="0"
+                             Foreground="#00FF88" FontFamily="Consolas"
+                             FontSize="30" FontWeight="Bold"
+                             HorizontalContentAlignment="Center"
+                             CaretBrush="#00FF88"
+                             LostFocus="TxtCps_LostFocus"/>
+                </Border>
+
+                <!-- Анти-детект -->
+                <TextBlock Text="АНТИВЫЯВЛЕНИЕ" Style="{StaticResource SectionLbl}"/>
+                <Border Background="#1A1A1A" CornerRadius="10"
+                        Margin="20,0" Padding="14,10">
+                    <StackPanel>
+                        <CheckBox x:Name="ChkAntiDetect"
+                                  Content="ВКЛЮЧИТЬ АНТИ-ДЕТЕКТ"
+                                  Foreground="#CCCCCC" FontFamily="Consolas"
+                                  FontSize="12" Margin="0,0,0,8"
+                                  Checked="AntiDetect_Toggle"
+                                  Unchecked="AntiDetect_Toggle"/>
+
+                        <TextBlock Text="Разброс интервала (%)"
+                                   Foreground="#555555" FontFamily="Consolas"
+                                   FontSize="11" Margin="0,0,0,2"/>
+                        <Grid Margin="0,0,0,6">
+                            <Slider x:Name="SldJitter" Minimum="0" Maximum="50"
+                                    Value="10" IsSnapToTickEnabled="True"
+                                    TickFrequency="1" Margin="0,0,46,0"/>
+                            <TextBlock Foreground="#00FF88" FontFamily="Consolas"
+                                       FontSize="12" HorizontalAlignment="Right"
+                                       VerticalAlignment="Center"
+                                       Text="{Binding ElementName=SldJitter,
+                                              Path=Value, StringFormat={}{0}%}"/>
+                        </Grid>
+
+                        <TextBlock Text="Шанс микро-паузы (%)"
+                                   Foreground="#555555" FontFamily="Consolas"
+                                   FontSize="11" Margin="0,0,0,2"/>
+                        <Grid Margin="0,0,0,6">
+                            <Slider x:Name="SldBurstChance" Minimum="0" Maximum="30"
+                                    Value="2" IsSnapToTickEnabled="True"
+                                    TickFrequency="1" Margin="0,0,46,0"/>
+                            <TextBlock Foreground="#00FF88" FontFamily="Consolas"
+                                       FontSize="12" HorizontalAlignment="Right"
+                                       VerticalAlignment="Center"
+                                       Text="{Binding ElementName=SldBurstChance,
+                                              Path=Value, StringFormat={}{0}%}"/>
+                        </Grid>
+
+                        <TextBlock Text="Разброс удержания (мс)"
+                                   Foreground="#555555" FontFamily="Consolas"
+                                   FontSize="11" Margin="0,0,0,2"/>
+                        <Grid>
+                            <Slider x:Name="SldHold" Minimum="0" Maximum="40"
+                                    Value="8" IsSnapToTickEnabled="True"
+                                    TickFrequency="1" Margin="0,0,56,0"/>
+                            <TextBlock Foreground="#00FF88" FontFamily="Consolas"
+                                       FontSize="12" HorizontalAlignment="Right"
+                                       VerticalAlignment="Center"
+                                       Text="{Binding ElementName=SldHold,
+                                              Path=Value, StringFormat={}{0} мс}"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Хоткей -->
+                <TextBlock Text="ГОРЯЧАЯ КЛАВИША" Style="{StaticResource SectionLbl}"/>
+                <Grid Margin="20,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="90"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Background="#1A1A1A" CornerRadius="8"
+                            Padding="12,0" Height="40">
+                        <TextBlock x:Name="TxtHotkey" Text="Ctrl + Z"
+                                   Foreground="#00FF88" FontFamily="Consolas"
+                                   FontSize="13" FontWeight="Bold"
+                                   VerticalAlignment="Center"/>
+                    </Border>
+                    <Button x:Name="BtnRecord" Grid.Column="1" Content="ЗАПИСЬ"
+                            Style="{StaticResource MainBtn}"
+                            Click="BtnRecord_Click"
+                            Background="#2A2A2A" Foreground="#CCCCCC"
+                            Margin="6,0,0,0"/>
+                </Grid>
+
+                <!-- Старт / Стоп -->
+                <Grid Margin="20,14,20,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition/>
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="BtnStart" Content="▶  СТАРТ"
+                            Style="{StaticResource MainBtn}"
+                            Click="BtnStart_Click"
+                            Background="#00FF88" Foreground="#0D0D0D"
+                            Margin="0,0,5,0"/>
+                    <Button x:Name="BtnStop" Grid.Column="1" Content="■  СТОП"
+                            Style="{StaticResource MainBtn}"
+                            Click="BtnStop_Click"
+                            Background="#1A1A1A" Foreground="#FF3355"
+                            Margin="5,0,0,0"/>
+                </Grid>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- FOOTER -->
+        <TextBlock Grid.Row="2" Text="SendInput  ·  WPF  ·  Windows"
+                   Foreground="#333333" FontFamily="Consolas" FontSize="10"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    </Grid>
 </Window>

@@ -13,239 +13,262 @@ namespace ClickerApp
 {
     public partial class MainWindow : Window
     {
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-        [DllImport("user32.dll")]
-        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
-        [DllImport("user32.dll")]
-        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+        // ── Win32 ─────────────────────────────────────────────────────────────────
+        [DllImport("user32.dll")] static extern uint SendInput(uint n, INPUT[] i, int cb);
+        [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mod, uint vk);
+        [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
 
         [StructLayout(LayoutKind.Sequential)]
-        struct INPUT { public uint type; public InputUnion u; }
+        struct INPUT { public uint type; public UNION u; }
         [StructLayout(LayoutKind.Explicit)]
-        struct InputUnion { [FieldOffset(0)] public MOUSEINPUT mi; }
+        struct UNION { [FieldOffset(0)] public MI mi; }
         [StructLayout(LayoutKind.Sequential)]
-        struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+        struct MI { public int dx, dy; public uint data, flags, time; public IntPtr extra; }
 
-        const uint INPUT_MOUSE          = 0;
-        const uint MOUSEEVENTF_LEFTDOWN  = 0x0002;
-        const uint MOUSEEVENTF_LEFTUP    = 0x0004;
-        const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
-        const uint MOUSEEVENTF_RIGHTUP   = 0x0010;
+        const uint T_MOUSE = 0, LDN = 2, LUP = 4, RDN = 8, RUP = 16;
 
-        private bool    isRunning      = false;
-        private Thread? clickThread;
-        private Random  rng            = new Random();
-        private uint    currentModifier = 0x0002;
-        private uint    currentKey      = 0x5A;
-        private const int HOTKEY_ID     = 9000;
-        private bool    isRecordingHotkey = false;
+        // ── Стан ──────────────────────────────────────────────────────────────────
+        bool    running;
+        Thread? thread;
+        Random  rng = new();
+        uint    hotMod = 0x0002, hotVk = 0x5A; // Ctrl + Z
+        bool    recording;
+        const int HK = 9000;
+        static readonly CultureInfo IC = CultureInfo.InvariantCulture;
 
-        // Пише виняток на Робочий стіл
-        private static void LogError(Exception ex)
+        // ── Лог помилок на Робочий стіл ───────────────────────────────────────────
+        static void Log(Exception ex)
         {
-            try { File.WriteAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "clicker_error.txt"), ex.ToString()); }
+            try
+            {
+                File.WriteAllText(
+                    Path.Combine(Environment.GetFolderPath(
+                        Environment.SpecialFolder.Desktop), "clicker_error.txt"),
+                    ex.ToString());
+            }
             catch { }
         }
 
+        // ── Конструктор ───────────────────────────────────────────────────────────
         public MainWindow()
         {
             try
             {
                 InitializeComponent();
                 LoadConfig();
-                ComponentDispatcher.ThreadFilterMessage += ComponentDispatcher_ThreadFilterMessage;
+                ComponentDispatcher.ThreadFilterMessage += OnMsg;
             }
-            catch (Exception ex) { LogError(ex); throw; }
+            catch (Exception ex) { Log(ex); throw; }
         }
 
-        // FIX: try-catch тут — це де міг бути краш
         protected override void OnSourceInitialized(EventArgs e)
         {
-            try { base.OnSourceInitialized(e); RegisterGlobalHotkey(); }
-            catch (Exception ex) { LogError(ex); throw; }
+            try { base.OnSourceInitialized(e); RegHK(); }
+            catch (Exception ex) { Log(ex); throw; }
         }
 
-        private void ClickLoop()
+        // ── Цикл клікера ──────────────────────────────────────────────────────────
+        void Loop()
         {
-            Stopwatch sw = new Stopwatch();
-            bool isLmb = false; int cps = 100; bool antiOn = false;
-            double jitter = 0, burstChance = 0, holdMs = 0;
+            // Зчитуємо параметри UI один раз на старті потоку
+            bool isLmb = true;
+            int  cps   = 100;
+            bool anti  = false;
+            double ji  = 0, bu = 0, ho = 0;
 
-            Dispatcher.Invoke(() => {
+            Dispatcher.Invoke(() =>
+            {
                 isLmb = BtnLmb.IsChecked == true;
-                int.TryParse(TxtCps.Text, out cps); if (cps < 1) cps = 1;
-                antiOn = ChkAntiDetect.IsChecked == true;
-                jitter = SldJitter.Value / 100.0;
-                burstChance = SldBurstChance.Value;
-                holdMs = SldHold.Value;
+                if (!int.TryParse(TxtCps.Text, out cps) || cps < 1) cps = 100;
+                anti = ChkAntiDetect.IsChecked == true;
+                ji   = SldJitter.Value / 100.0;
+                bu   = SldBurstChance.Value;
+                ho   = SldHold.Value;
             });
 
-            uint downFlag = isLmb ? MOUSEEVENTF_LEFTDOWN  : MOUSEEVENTF_RIGHTDOWN;
-            uint upFlag   = isLmb ? MOUSEEVENTF_LEFTUP    : MOUSEEVENTF_RIGHTUP;
+            uint dn = isLmb ? LDN : RDN;
+            uint up = isLmb ? LUP : RUP;
+            var  sw = new Stopwatch();
 
-            while (isRunning)
+            while (running)
             {
                 sw.Restart();
-                double baseInterval = 1.0 / cps;
-                if (antiOn) baseInterval = Math.Max(0.0001, baseInterval + (rng.NextDouble()*2-1)*jitter*baseInterval);
+                double iv = 1.0 / cps;
+                if (anti) iv = Math.Max(0.0001, iv + (rng.NextDouble() * 2 - 1) * ji * iv);
 
-                SendMouseInput(downFlag);
-                if (antiOn && holdMs > 0) PreciseSleep(rng.NextDouble() * (holdMs / 1000.0));
-                SendMouseInput(upFlag);
-                if (antiOn && rng.Next(1,101) <= burstChance) PreciseSleep(rng.Next(50,501)/1000.0);
+                Click(dn);
+                if (anti && ho > 0) Sleep(rng.NextDouble() * ho / 1000.0);
+                Click(up);
+                if (anti && rng.Next(1, 101) <= bu) Sleep(rng.Next(50, 501) / 1000.0);
 
-                double elapsed = sw.Elapsed.TotalSeconds;
-                if (elapsed < baseInterval) PreciseSleep(baseInterval - elapsed);
+                double left = iv - sw.Elapsed.TotalSeconds;
+                if (left > 0) Sleep(left);
             }
         }
 
-        private void PreciseSleep(double s)
+        static void Sleep(double s)
         {
             if (s <= 0) return;
-            long ticks = (long)(s * Stopwatch.Frequency);
-            long start = Stopwatch.GetTimestamp();
+            long t = (long)(s * Stopwatch.Frequency);
+            long n = Stopwatch.GetTimestamp();
             if (s > 0.002) Thread.Sleep((int)((s - 0.002) * 1000));
-            while (Stopwatch.GetTimestamp() - start < ticks) { }
+            while (Stopwatch.GetTimestamp() - n < t) { }
         }
 
-        private void SendMouseInput(uint flags)
+        static void Click(uint f)
         {
-            INPUT[] inputs = new INPUT[1];
-            inputs[0].type = INPUT_MOUSE; inputs[0].u.mi.dwFlags = flags;
-            SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+            var inp = new INPUT[1];
+            inp[0].type = T_MOUSE;
+            inp[0].u.mi.flags = f;
+            SendInput(1, inp, Marshal.SizeOf<INPUT>());
         }
 
-        private void StartClicker()
+        // ── Старт / Стоп ──────────────────────────────────────────────────────────
+        void Start()
         {
-            if (isRunning) return;
-            isRunning = true; UpdateUiState(true);
-            clickThread = new Thread(ClickLoop) { IsBackground = true, Priority = ThreadPriority.Highest };
-            clickThread.Start();
+            if (running) return;
+            running = true;
+            SetUi(true);
+            thread = new Thread(Loop) { IsBackground = true, Priority = ThreadPriority.Highest };
+            thread.Start();
         }
 
-        private void StopClicker() { if (!isRunning) return; isRunning = false; UpdateUiState(false); }
-        private void ToggleClicker() { if (isRunning) StopClicker(); else StartClicker(); }
-
-        private void UpdateUiState(bool active)
+        void Stop()
         {
-            Dispatcher.Invoke(() => {
-                var color = active ? "#00FF88" : "#555555";
-                StatusDot.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color));
-                StatusText.Text = active ? "ACTIVE" : "IDLE";
-                StatusText.Foreground = StatusDot.Fill;
-                BtnStart.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(active ? "#555555" : "#00FF88"));
-            });
+            if (!running) return;
+            running = false;
+            SetUi(false);
         }
 
-        private void RegisterGlobalHotkey()
+        void Toggle() { if (running) Stop(); else Start(); }
+
+        void SetUi(bool on)
         {
-            var helper = new WindowInteropHelper(this);
-            UnregisterHotKey(helper.Handle, HOTKEY_ID);
-            RegisterHotKey(helper.Handle, HOTKEY_ID, currentModifier, currentKey);
+            if (!Dispatcher.CheckAccess()) { Dispatcher.Invoke(() => SetUi(on)); return; }
+            var green = new SolidColorBrush(Color.FromRgb(0, 255, 136));
+            var grey  = new SolidColorBrush(Color.FromRgb(85, 85, 85));
+            StatusDot.Fill        = on ? green : grey;
+            StatusText.Text       = on ? "ACTIVE" : "IDLE";
+            StatusText.Foreground = StatusDot.Fill;
+            BtnStart.Background   = on ? grey : green;
         }
 
-        private void ComponentDispatcher_ThreadFilterMessage(ref MSG msg, ref bool handled)
+        // ── Хоткей ────────────────────────────────────────────────────────────────
+        void RegHK()
         {
-            const int WM_HOTKEY = 0x0312;
-            if (msg.message == WM_HOTKEY && msg.wParam.ToInt32() == HOTKEY_ID && !isRecordingHotkey)
-            { ToggleClicker(); handled = true; }
+            var h = new WindowInteropHelper(this).Handle;
+            UnregisterHotKey(h, HK);
+            RegisterHotKey(h, HK, hotMod, hotVk);
         }
 
-        private void BtnRecord_Click(object sender, RoutedEventArgs e)
+        void OnMsg(ref MSG msg, ref bool handled)
         {
-            if (isRecordingHotkey) return;
-            isRecordingHotkey = true; BtnRecord.Content = "...";
-            TxtHotkey.Text = "Нажмите клавишу"; this.KeyDown += MainWindow_KeyDown;
+            if (msg.message == 0x0312 && msg.wParam.ToInt32() == HK && !recording)
+            { Toggle(); handled = true; }
         }
 
-        private void MainWindow_KeyDown(object sender, KeyEventArgs e)
+        void BtnRecord_Click(object s, RoutedEventArgs e)
         {
-            this.KeyDown -= MainWindow_KeyDown;
-            uint mod = 0; string modStr = "";
-            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) { mod |= 0x0002; modStr += "Ctrl + "; }
-            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))   { mod |= 0x0004; modStr += "Shift + "; }
-            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt))     { mod |= 0x0001; modStr += "Alt + "; }
-            Key key = (e.Key == Key.System) ? e.SystemKey : e.Key;
-            if (key == Key.LeftCtrl || key == Key.RightCtrl || key == Key.LeftShift ||
-                key == Key.RightShift || key == Key.LeftAlt || key == Key.RightAlt) key = Key.Z;
-            currentModifier = mod; currentKey = (uint)KeyInterop.VirtualKeyFromKey(key);
-            TxtHotkey.Text = modStr + key.ToString(); BtnRecord.Content = "ЗАПИСЬ";
-            isRecordingHotkey = false; RegisterGlobalHotkey(); SaveConfig(); e.Handled = true;
+            if (recording) return;
+            recording = true;
+            BtnRecord.Content = "...";
+            TxtHotkey.Text    = "Нажмите клавишу";
+            KeyDown += OnKey;
         }
 
-        // FIX: InvariantCulture — щоб крапка/кома не ламала парсинг на укр. локалі
-        private void SaveConfig()
+        void OnKey(object s, KeyEventArgs e)
         {
-            var ci = CultureInfo.InvariantCulture;
-            Environment.SetEnvironmentVariable("KILLMEY_CPS",  TxtCps.Text,                                  EnvironmentVariableTarget.User);
-            Environment.SetEnvironmentVariable("KILLMEY_MOD",  currentModifier.ToString(ci),                  EnvironmentVariableTarget.User);
-            Environment.SetEnvironmentVariable("KILLMEY_KEY",  currentKey.ToString(ci),                       EnvironmentVariableTarget.User);
-            Environment.SetEnvironmentVariable("KILLMEY_LMB",  (BtnLmb.IsChecked == true).ToString(),         EnvironmentVariableTarget.User);
-            Environment.SetEnvironmentVariable("KILLMEY_ANTI", (ChkAntiDetect.IsChecked == true).ToString(),  EnvironmentVariableTarget.User);
-            Environment.SetEnvironmentVariable("KILLMEY_JIT",  SldJitter.Value.ToString(ci),                  EnvironmentVariableTarget.User);
-            Environment.SetEnvironmentVariable("KILLMEY_BRST", SldBurstChance.Value.ToString(ci),             EnvironmentVariableTarget.User);
-            Environment.SetEnvironmentVariable("KILLMEY_HOLD", SldHold.Value.ToString(ci),                    EnvironmentVariableTarget.User);
+            KeyDown -= OnKey;
+            uint m = 0; string ms = "";
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) { m |= 0x0002; ms += "Ctrl+"; }
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))   { m |= 0x0004; ms += "Shift+"; }
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt))     { m |= 0x0001; ms += "Alt+"; }
+            Key k = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (k == Key.LeftCtrl  || k == Key.RightCtrl  ||
+                k == Key.LeftShift || k == Key.RightShift ||
+                k == Key.LeftAlt   || k == Key.RightAlt) k = Key.Z;
+            hotMod = m; hotVk = (uint)KeyInterop.VirtualKeyFromKey(k);
+            TxtHotkey.Text    = ms + k;
+            BtnRecord.Content = "ЗАПИСЬ";
+            recording = false;
+            RegHK(); Save(); e.Handled = true;
         }
 
-        private void LoadConfig()
+        // ── Конфіг через змінні середовища (без файлів) ───────────────────────────
+        void Save()
+        {
+            Env("CPS",  TxtCps.Text);
+            Env("MOD",  hotMod.ToString(IC));
+            Env("VK",   hotVk.ToString(IC));
+            Env("LMB",  (BtnLmb.IsChecked == true).ToString());
+            Env("ANTI", (ChkAntiDetect.IsChecked == true).ToString());
+            Env("JIT",  SldJitter.Value.ToString(IC));
+            Env("BRST", SldBurstChance.Value.ToString(IC));
+            Env("HOLD", SldHold.Value.ToString(IC));
+        }
+
+        void LoadConfig()
         {
             try
             {
-                var ci = CultureInfo.InvariantCulture;
-                var c = Environment.GetEnvironmentVariable("KILLMEY_CPS", EnvironmentVariableTarget.User);
-                if (!string.IsNullOrEmpty(c)) TxtCps.Text = c;
+                var cps = Env("CPS"); if (cps != null) TxtCps.Text = cps;
 
-                var m = Environment.GetEnvironmentVariable("KILLMEY_MOD", EnvironmentVariableTarget.User);
-                if (!string.IsNullOrEmpty(m) && uint.TryParse(m, out uint mVal)) currentModifier = mVal;
+                if (Env("MOD") is string ms && uint.TryParse(ms, out uint mv)) hotMod = mv;
+                if (Env("VK")  is string vs && uint.TryParse(vs, out uint vv)) hotVk  = vv;
 
-                var k = Environment.GetEnvironmentVariable("KILLMEY_KEY", EnvironmentVariableTarget.User);
-                if (!string.IsNullOrEmpty(k) && uint.TryParse(k, out uint kVal)) currentKey = kVal;
+                if (Env("LMB") is string ls && bool.TryParse(ls, out bool lv))
+                { BtnLmb.IsChecked = lv; BtnRmb.IsChecked = !lv; }
 
-                var l = Environment.GetEnvironmentVariable("KILLMEY_LMB", EnvironmentVariableTarget.User);
-                if (!string.IsNullOrEmpty(l) && bool.TryParse(l, out bool lVal)) { BtnLmb.IsChecked = lVal; BtnRmb.IsChecked = !lVal; }
+                if (Env("ANTI") is string @as && bool.TryParse(@as, out bool av))
+                    ChkAntiDetect.IsChecked = av;
 
-                var anti = Environment.GetEnvironmentVariable("KILLMEY_ANTI", EnvironmentVariableTarget.User);
-                if (!string.IsNullOrEmpty(anti) && bool.TryParse(anti, out bool antiVal)) ChkAntiDetect.IsChecked = antiVal;
+                if (Env("JIT") is string js && double.TryParse(js, NumberStyles.Any, IC, out double jv))
+                    SldJitter.Value = jv;
+                if (Env("BRST") is string bs && double.TryParse(bs, NumberStyles.Any, IC, out double bv))
+                    SldBurstChance.Value = bv;
+                if (Env("HOLD") is string hs && double.TryParse(hs, NumberStyles.Any, IC, out double hv))
+                    SldHold.Value = hv;
 
-                var jit = Environment.GetEnvironmentVariable("KILLMEY_JIT", EnvironmentVariableTarget.User);
-                if (!string.IsNullOrEmpty(jit) && double.TryParse(jit, NumberStyles.Any, ci, out double jitVal)) SldJitter.Value = jitVal;
-
-                var brst = Environment.GetEnvironmentVariable("KILLMEY_BRST", EnvironmentVariableTarget.User);
-                if (!string.IsNullOrEmpty(brst) && double.TryParse(brst, NumberStyles.Any, ci, out double brstVal)) SldBurstChance.Value = brstVal;
-
-                var hold = Environment.GetEnvironmentVariable("KILLMEY_HOLD", EnvironmentVariableTarget.User);
-                if (!string.IsNullOrEmpty(hold) && double.TryParse(hold, NumberStyles.Any, ci, out double holdVal)) SldHold.Value = holdVal;
-
+                // Текст хоткею
                 string hk = "";
-                if ((currentModifier & 0x0002) != 0) hk += "Ctrl + ";
-                if ((currentModifier & 0x0004) != 0) hk += "Shift + ";
-                if ((currentModifier & 0x0001) != 0) hk += "Alt + ";
-                hk += KeyInterop.KeyFromVirtualKey((int)currentKey).ToString();
+                if ((hotMod & 0x0002) != 0) hk += "Ctrl+";
+                if ((hotMod & 0x0004) != 0) hk += "Shift+";
+                if ((hotMod & 0x0001) != 0) hk += "Alt+";
+                hk += KeyInterop.KeyFromVirtualKey((int)hotVk);
                 TxtHotkey.Text = hk;
             }
-            catch { }
+            catch { /* перший запуск — залишаємо дефолти */ }
         }
 
-        private void Window_MouseDown(object sender, MouseButtonEventArgs e) { if (e.ChangedButton == MouseButton.Left) DragMove(); }
+        static void   Env(string k, string v) =>
+            Environment.SetEnvironmentVariable("KM_"+k, v, EnvironmentVariableTarget.User);
+        static string? Env(string k) =>
+            Environment.GetEnvironmentVariable("KM_"+k, EnvironmentVariableTarget.User);
 
-        private void MouseMode_Changed(object sender, RoutedEventArgs e)
+        // ── UI-події ──────────────────────────────────────────────────────────────
+        void Window_MouseLeftButtonDown(object s, MouseButtonEventArgs e)
+        { try { DragMove(); } catch { } }
+
+        void MouseMode_Changed(object s, RoutedEventArgs e)
         {
             if (BtnLmb == null || BtnRmb == null) return;
-            var on  = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#00FF88"));
-            var off = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1A1A1A"));
-            BtnLmb.Background = BtnLmb.IsChecked == true ? on : off;
-            BtnLmb.Foreground = BtnLmb.IsChecked == true ? Brushes.Black : Brushes.Gray;
-            BtnRmb.Background = BtnRmb.IsChecked == true ? on : off;
-            BtnRmb.Foreground = BtnRmb.IsChecked == true ? Brushes.Black : Brushes.Gray;
-            SaveConfig();
+            var green = new SolidColorBrush(Color.FromRgb(0, 255, 136));
+            var dark  = new SolidColorBrush(Color.FromRgb(26, 26, 26));
+            bool l = BtnLmb.IsChecked == true;
+            BtnLmb.Background = l ? green : dark;
+            BtnLmb.Foreground = l ? Brushes.Black : Brushes.Gray;
+            BtnRmb.Background = l ? dark  : green;
+            BtnRmb.Foreground = l ? Brushes.Gray  : Brushes.Black;
+            Save();
         }
 
-        private void TxtCps_LostFocus(object sender, RoutedEventArgs e) { if (!int.TryParse(TxtCps.Text, out int cps) || cps < 1) TxtCps.Text = "100"; SaveConfig(); }
-        private void AntiDetect_Toggle(object sender, RoutedEventArgs e) => SaveConfig();
-        private void BtnStart_Click(object sender, RoutedEventArgs e)    => StartClicker();
-        private void BtnStop_Click(object sender, RoutedEventArgs e)     => StopClicker();
-        private void Minimize_Click(object sender, RoutedEventArgs e)    => this.WindowState = WindowState.Minimized;
-        private void Close_Click(object sender, RoutedEventArgs e)       { StopClicker(); SaveConfig(); this.Close(); }
+        void TxtCps_LostFocus(object s, RoutedEventArgs e)
+        { if (!int.TryParse(TxtCps.Text, out int c) || c < 1) TxtCps.Text = "100"; Save(); }
+
+        void AntiDetect_Toggle(object s, RoutedEventArgs e) => Save();
+        void BtnStart_Click(object s, RoutedEventArgs e)    => Start();
+        void BtnStop_Click(object s, RoutedEventArgs e)     => Stop();
+        void Minimize_Click(object s, RoutedEventArgs e)    => WindowState = WindowState.Minimized;
+        void Close_Click(object s, RoutedEventArgs e)       { Stop(); Save(); Close(); }
     }
 }
