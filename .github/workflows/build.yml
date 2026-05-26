@@ -8,8 +8,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+      - run: dotnet publish -c Release -r win-x64 --self-contained true
       - uses: actions/upload-artifact@v4
         with:
           name: clicker-exe
-          path: '**/publish/*.exe'
+          path: '**/publish/'
