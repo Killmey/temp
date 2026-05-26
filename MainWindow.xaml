@@ -6,7 +6,6 @@
         Width="440"
         SizeToContent="Height"
         MinHeight="640" MinWidth="420"
-        Icon="icon.ico"
         WindowStyle="None"
         ResizeMode="NoResize"
         Background="Transparent"

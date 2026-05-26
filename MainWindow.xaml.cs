@@ -12,6 +12,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using Forms = System.Windows.Forms;
 
 namespace ClickerApp
@@ -109,6 +110,7 @@ namespace ClickerApp
             {
                 mouseProc = MouseHookCallback;
                 InitializeComponent();
+                TrySetWindowIcon();
                 LoadConfig();
                 ApplyConfigToUi();
                 ApplyTheme();
@@ -145,6 +147,17 @@ namespace ClickerApp
                     Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
                     "clicker_error.txt");
                 File.WriteAllText(path, ex.ToString());
+            }
+            catch { }
+        }
+
+        void TrySetWindowIcon()
+        {
+            try
+            {
+                var iconPath = Path.Combine(AppContext.BaseDirectory, "icon.ico");
+                if (File.Exists(iconPath))
+                    Icon = BitmapFrame.Create(new Uri(iconPath, UriKind.Absolute));
             }
             catch { }
         }

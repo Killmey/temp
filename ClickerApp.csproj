@@ -9,4 +9,8 @@
     <RootNamespace>ClickerApp</RootNamespace>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <None Remove="icon.ico" />
+    <Content Include="icon.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
