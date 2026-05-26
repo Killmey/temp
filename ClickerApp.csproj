@@ -4,6 +4,7 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
     <AssemblyName>ClickerApp</AssemblyName>
     <RootNamespace>ClickerApp</RootNamespace>
     <Nullable>enable</Nullable>

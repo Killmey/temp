@@ -328,7 +328,9 @@ namespace ClickerApp
 
                 var intervalTicks = Math.Max(1, (long)Math.Round(interval * Stopwatch.Frequency));
                 var now = Stopwatch.GetTimestamp();
-                if (nextTick == 0 || nextTick < now)
+                if (nextTick == 0)
+                    nextTick = now + intervalTicks;
+                else if (nextTick < now - intervalTicks)
                     nextTick = now + intervalTicks;
 
                 PreciseSleepUntil(nextTick);
@@ -343,7 +345,7 @@ namespace ClickerApp
                 if (localAnti && rng.Next(1, 101) <= localBurstChance)
                     PreciseSleep(localBurstMs / 1000.0);
 
-                nextTick = Stopwatch.GetTimestamp() + intervalTicks;
+                nextTick += intervalTicks;
             }
         }
 
