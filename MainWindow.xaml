@@ -10,7 +10,8 @@
         Background="Transparent"
         AllowsTransparency="True"
         WindowStartupLocation="CenterScreen"
-        MouseLeftButtonDown="Window_MouseLeftButtonDown">
+        MouseLeftButtonDown="Window_MouseLeftButtonDown"
+        PreviewMouseDown="Window_PreviewMouseDown">
 
     <Window.Resources>
         <SolidColorBrush x:Key="BgBrush" Color="#0D0D0D"/>
@@ -20,7 +21,7 @@
         <SolidColorBrush x:Key="TextBrush" Color="#E0E0E0"/>
         <SolidColorBrush x:Key="MutedBrush" Color="#676767"/>
         <SolidColorBrush x:Key="LineBrush" Color="#2A2A2A"/>
-        <sys:Double x:Key="ControlFontSize">13</sys:Double>
+        <sys:Double x:Key="ControlFontSize">14</sys:Double>
 
         <Style TargetType="TextBlock">
             <Setter Property="FontFamily" Value="Consolas"/>
@@ -29,14 +30,14 @@
 
         <Style x:Key="SectionLabel" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
-            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontSize" Value="11"/>
             <Setter Property="FontWeight" Value="Bold"/>
             <Setter Property="Margin" Value="0,0,0,7"/>
         </Style>
 
         <Style x:Key="PanelTitle" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontSize" Value="13"/>
             <Setter Property="FontWeight" Value="Bold"/>
         </Style>
 
@@ -152,7 +153,9 @@
                 </StackPanel>
             </Grid>
 
-            <StackPanel Grid.Row="1">
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                          Background="Transparent" Padding="0,0,4,0">
+            <StackPanel>
                 <Rectangle Height="1" Fill="{DynamicResource LineBrush}" Margin="0,0,0,14"/>
 
                 <TextBlock Text="КНОПКА МИШІ" Style="{StaticResource SectionLabel}"/>
@@ -169,6 +172,20 @@
                                   Click="MouseButton_Click" Margin="5,0,0,0"/>
                 </Grid>
 
+                <TextBlock Text="РЕЖИМ" Style="{StaticResource SectionLabel}"/>
+                <Grid Margin="0,0,0,16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition/>
+                    </Grid.ColumnDefinitions>
+                    <ToggleButton x:Name="BtnStayMode" Content="STAY"
+                                  Style="{StaticResource SegmentButton}"
+                                  Click="RunMode_Click" Margin="0,0,5,0"/>
+                    <ToggleButton x:Name="BtnHoldMode" Grid.Column="1" Content="HOLD"
+                                  Style="{StaticResource SegmentButton}"
+                                  Click="RunMode_Click" Margin="5,0,0,0"/>
+                </Grid>
+
                 <TextBlock Text="КЛІКІВ НА СЕКУНДУ" Style="{StaticResource SectionLabel}"/>
                 <Border Background="{DynamicResource SurfaceBrush}" CornerRadius="10"
                         BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
@@ -178,7 +195,7 @@
                              Foreground="{DynamicResource AccentBrush}"
                              FontFamily="Consolas" FontSize="34" FontWeight="Bold"
                              HorizontalContentAlignment="Center"
-                             CaretBrush="{DynamicResource AccentBrush}"
+                             CaretBrush="Transparent"
                              LostFocus="TxtCps_LostFocus"
                              KeyDown="TxtCps_KeyDown"/>
                 </Border>
@@ -264,10 +281,11 @@
                             Height="50" Margin="6,0,0,0"/>
                 </Grid>
             </StackPanel>
+            </ScrollViewer>
 
             <TextBlock Grid.Row="2" Text="SendInput  ·  WPF  ·  Windows"
                        Foreground="{DynamicResource MutedBrush}"
-                       FontSize="10" HorizontalAlignment="Center"
+                       FontSize="12" HorizontalAlignment="Center"
                        VerticalAlignment="Bottom"/>
         </Grid>
     </Border>

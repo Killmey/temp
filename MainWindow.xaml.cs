@@ -11,6 +11,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using Forms = System.Windows.Forms;
 
 namespace ClickerApp
@@ -20,6 +21,11 @@ namespace ClickerApp
         [DllImport("user32.dll")] static extern uint SendInput(uint nInputs, INPUT[] inputs, int size);
         [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint vk);
         [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+        [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc callback, IntPtr hMod, uint threadId);
+        [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
+        [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto)] static extern IntPtr GetModuleHandle(string? moduleName);
         [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint period);
         [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint period);
 
@@ -41,6 +47,25 @@ namespace ClickerApp
         const uint LeftDown = 0x0002, LeftUp = 0x0004, RightDown = 0x0008, RightUp = 0x0010;
         const uint ModAlt = 0x0001, ModCtrl = 0x0002, ModShift = 0x0004;
         const int HotkeyId = 9000;
+        const int MouseHookId = 14;
+        const int WmLButtonDown = 0x0201, WmLButtonUp = 0x0202;
+        const int WmRButtonDown = 0x0204, WmRButtonUp = 0x0205;
+        const uint MouseInjected = 0x00000001;
+
+        delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct POINT { public int x, y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct MSLLHOOKSTRUCT
+        {
+            public POINT pt;
+            public uint mouseData;
+            public uint flags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
 
         static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
         static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
@@ -52,12 +77,19 @@ namespace ClickerApp
         volatile bool running;
         Thread? clickThread;
         IntPtr windowHandle;
+        IntPtr mouseHook;
+        readonly LowLevelMouseProc mouseProc;
         bool initialized;
         bool recording;
         bool highResolutionTimer;
+        volatile bool holdActive;
+        volatile bool physicalLeftDown;
+        volatile bool physicalRightDown;
 
         int cps = 100;
-        bool clickLmb;
+        bool clickLeft;
+        bool clickRight = true;
+        bool holdMode;
         bool antiOn;
         int jitter = 10;
         int burstChance = 2;
@@ -67,7 +99,7 @@ namespace ClickerApp
         uint hotMod = ModCtrl;
         uint hotVk = 0x5A;
         string hotDisplay = "Z";
-        int fontSize = 13;
+        int fontSize = 14;
 
         ThemeConfig theme = new();
 
@@ -75,10 +107,12 @@ namespace ClickerApp
         {
             try
             {
+                mouseProc = MouseHookCallback;
                 InitializeComponent();
                 LoadConfig();
                 ApplyConfigToUi();
                 ApplyTheme();
+                Loaded += (_, _) => AttachHoverAnimations(this);
                 initialized = true;
                 ComponentDispatcher.ThreadFilterMessage += OnHotkeyMessage;
             }
@@ -90,6 +124,7 @@ namespace ClickerApp
             base.OnSourceInitialized(e);
             windowHandle = new WindowInteropHelper(this).Handle;
             RegisterCurrentHotkey();
+            InstallMouseHook();
         }
 
         protected override void OnClosed(EventArgs e)
@@ -97,6 +132,7 @@ namespace ClickerApp
             Stop();
             SaveConfig();
             UnregisterCurrentHotkey();
+            UninstallMouseHook();
             ComponentDispatcher.ThreadFilterMessage -= OnHotkeyMessage;
             base.OnClosed(e);
         }
@@ -122,7 +158,21 @@ namespace ClickerApp
                 if (cfg == null) return;
 
                 cps = Math.Max(1, cfg.Cps);
-                clickLmb = string.Equals(cfg.Mode, "LMB", StringComparison.OrdinalIgnoreCase);
+                if (cfg.ClickLeft.HasValue || cfg.ClickRight.HasValue)
+                {
+                    clickLeft = cfg.ClickLeft == true;
+                    clickRight = cfg.ClickRight != false;
+                }
+                else
+                {
+                    clickLeft = string.Equals(cfg.Mode, "LMB", StringComparison.OrdinalIgnoreCase);
+                    clickRight = !clickLeft;
+                }
+
+                if (!clickLeft && !clickRight)
+                    clickRight = true;
+
+                holdMode = string.Equals(cfg.RunMode, "Hold", StringComparison.OrdinalIgnoreCase);
                 antiOn = cfg.AntiDetect.On;
                 jitter = Clamp(cfg.AntiDetect.Jitter, 0, 50);
                 burstChance = Clamp(cfg.AntiDetect.BurstChance, 0, 30);
@@ -132,7 +182,7 @@ namespace ClickerApp
                 hotVk = cfg.Hotkey.VirtualKey == 0 ? 0x5A : cfg.Hotkey.VirtualKey;
                 hotDisplay = string.IsNullOrWhiteSpace(cfg.Hotkey.Display) ? KeyName(hotVk) : cfg.Hotkey.Display;
                 theme = cfg.Theme ?? new ThemeConfig();
-                fontSize = Clamp(cfg.FontSize, 9, 18);
+                fontSize = Clamp(cfg.FontSize, 11, 18);
             }
             catch { }
         }
@@ -145,7 +195,10 @@ namespace ClickerApp
                 var cfg = new AppConfig
                 {
                     Cps = cps,
-                    Mode = clickLmb ? "LMB" : "RMB",
+                    Mode = clickLeft && !clickRight ? "LMB" : "RMB",
+                    ClickLeft = clickLeft,
+                    ClickRight = clickRight,
+                    RunMode = holdMode ? "Hold" : "Stay",
                     Hotkey = new HotkeyConfig { Modifiers = hotMod, VirtualKey = hotVk, Display = hotDisplay },
                     AntiDetect = new AntiDetectConfig
                     {
@@ -167,7 +220,10 @@ namespace ClickerApp
         {
             TxtCps.Text = cps.ToString(Invariant);
             BtnAntiToggle.IsChecked = antiOn;
-            SetMouseMode(clickLmb, save: false);
+            BtnStayMode.IsChecked = !holdMode;
+            BtnHoldMode.IsChecked = holdMode;
+            SetMouseButtons(clickLeft, clickRight, save: false);
+            SetRunMode(holdMode, save: false);
             TxtHotkey.Text = HotkeyText();
             UpdateAntiUi();
             UpdateMiniUi();
@@ -188,8 +244,10 @@ namespace ClickerApp
             lock (stateLock)
             {
                 cps = parsed;
-                clickLmb = BtnLmb.IsChecked == true;
+                clickLeft = BtnLmb.IsChecked == true;
+                clickRight = BtnRmb.IsChecked == true;
                 antiOn = BtnAntiToggle.IsChecked == true;
+                holdMode = BtnHoldMode.IsChecked == true;
             }
         }
 
@@ -203,7 +261,8 @@ namespace ClickerApp
             Resources["MutedBrush"] = BrushOf(theme.Muted);
             Resources["LineBrush"] = BrushOf(theme.Line);
             Resources["ControlFontSize"] = (double)fontSize;
-            SetMouseMode(BtnLmb.IsChecked == true, save: false);
+            SetMouseButtons(BtnLmb.IsChecked == true, BtnRmb.IsChecked == true, save: false);
+            SetRunMode(BtnHoldMode.IsChecked == true, save: false);
             UpdateAntiUi();
             UpdateMiniUi();
             SetUi(running);
@@ -231,21 +290,33 @@ namespace ClickerApp
 
         void Loop()
         {
-            var nextTick = Stopwatch.GetTimestamp();
+            long nextTick = 0;
 
             while (running)
             {
                 int localCps, localJitter, localBurstChance, localBurstMs, localHoldMs;
-                bool localLmb, localAnti;
+                bool localLeft, localRight, localAnti, localHoldMode;
                 lock (stateLock)
                 {
                     localCps = Math.Max(1, cps);
-                    localLmb = clickLmb;
+                    localLeft = clickLeft;
+                    localRight = clickRight;
                     localAnti = antiOn;
+                    localHoldMode = holdMode;
                     localJitter = jitter;
                     localBurstChance = burstChance;
                     localBurstMs = burstMs;
                     localHoldMs = holdMs;
+                }
+
+                if (!localLeft && !localRight)
+                    localRight = true;
+
+                if (localHoldMode && !holdActive)
+                {
+                    nextTick = 0;
+                    Thread.Sleep(1);
+                    continue;
                 }
 
                 var interval = 1.0 / localCps;
@@ -255,18 +326,24 @@ namespace ClickerApp
                     interval = Math.Max(0.0001, interval + (rng.NextDouble() * 2 - 1) * spread * interval);
                 }
 
-                var started = Stopwatch.GetTimestamp();
-                Click(localLmb ? LeftDown : RightDown);
+                var intervalTicks = Math.Max(1, (long)Math.Round(interval * Stopwatch.Frequency));
+                var now = Stopwatch.GetTimestamp();
+                if (nextTick == 0 || nextTick < now)
+                    nextTick = now + intervalTicks;
+
+                PreciseSleepUntil(nextTick);
+
+                if (localLeft) Click(LeftDown);
+                if (localRight) Click(RightDown);
                 if (localAnti && localHoldMs > 0)
                     PreciseSleep(rng.NextDouble() * localHoldMs / 1000.0);
-                Click(localLmb ? LeftUp : RightUp);
+                if (localRight) Click(RightUp);
+                if (localLeft) Click(LeftUp);
 
                 if (localAnti && rng.Next(1, 101) <= localBurstChance)
                     PreciseSleep(localBurstMs / 1000.0);
 
-                var intervalTicks = Math.Max(1, (long)(interval * Stopwatch.Frequency));
-                nextTick = Math.Max(nextTick + intervalTicks, started + intervalTicks);
-                PreciseSleepUntil(nextTick);
+                nextTick += intervalTicks;
             }
         }
 
@@ -305,6 +382,9 @@ namespace ClickerApp
             if (running) return;
             TxtCps_LostFocus(this, new RoutedEventArgs());
             RefreshRuntimeState();
+            holdActive = false;
+            physicalLeftDown = false;
+            physicalRightDown = false;
             EnableHighResolutionTimer();
             running = true;
             SetUi(true);
@@ -316,6 +396,9 @@ namespace ClickerApp
         {
             if (!running) return;
             running = false;
+            holdActive = false;
+            physicalLeftDown = false;
+            physicalRightDown = false;
             DisableHighResolutionTimer();
             SetUi(false);
         }
@@ -335,7 +418,7 @@ namespace ClickerApp
             }
 
             StatusDot.Fill = on ? AccentBrush : MutedBrush;
-            StatusText.Text = on ? "ACTIVE" : "IDLE";
+            StatusText.Text = on ? (holdMode && !holdActive ? "ARMED" : "ACTIVE") : "IDLE";
             StatusText.Foreground = on ? AccentBrush : MutedBrush;
             BtnStart.Background = on ? MutedBrush : AccentBrush;
             BtnStart.Foreground = BgBrush;
@@ -355,6 +438,104 @@ namespace ClickerApp
             if (!highResolutionTimer) return;
             timeEndPeriod(1);
             highResolutionTimer = false;
+        }
+
+        void InstallMouseHook()
+        {
+            if (mouseHook != IntPtr.Zero) return;
+            var moduleHandle = IntPtr.Zero;
+            try
+            {
+                using var process = Process.GetCurrentProcess();
+                moduleHandle = GetModuleHandle(process.MainModule?.ModuleName);
+            }
+            catch { }
+            mouseHook = SetWindowsHookEx(MouseHookId, mouseProc, moduleHandle, 0);
+        }
+
+        void UninstallMouseHook()
+        {
+            if (mouseHook == IntPtr.Zero) return;
+            UnhookWindowsHookEx(mouseHook);
+            mouseHook = IntPtr.Zero;
+        }
+
+        IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0)
+            {
+                var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+                if ((data.flags & MouseInjected) == 0 && GetForegroundWindow() != windowHandle)
+                {
+                    var msg = wParam.ToInt32();
+                    if (msg is WmLButtonDown or WmLButtonUp or WmRButtonDown or WmRButtonUp)
+                        HandlePhysicalMouse(msg);
+                }
+            }
+
+            return CallNextHookEx(mouseHook, nCode, wParam, lParam);
+        }
+
+        void HandlePhysicalMouse(int msg)
+        {
+            bool localHoldMode, localLeft, localRight;
+            lock (stateLock)
+            {
+                localHoldMode = holdMode;
+                localLeft = clickLeft;
+                localRight = clickRight;
+            }
+
+            if (!running || !localHoldMode)
+                return;
+
+            if (msg == WmLButtonDown) physicalLeftDown = true;
+            if (msg == WmLButtonUp) physicalLeftDown = false;
+            if (msg == WmRButtonDown) physicalRightDown = true;
+            if (msg == WmRButtonUp) physicalRightDown = false;
+
+            SetHoldActive((localLeft && physicalLeftDown) || (localRight && physicalRightDown));
+        }
+
+        void SetHoldActive(bool active)
+        {
+            if (holdActive == active) return;
+            holdActive = active;
+            Dispatcher.BeginInvoke(new Action(() => SetUi(running)));
+        }
+
+        void AttachHoverAnimations(DependencyObject root)
+        {
+            var count = VisualTreeHelper.GetChildrenCount(root);
+            for (var i = 0; i < count; i++)
+            {
+                var child = VisualTreeHelper.GetChild(root, i);
+                if (child is ButtonBase button)
+                    AttachHoverAnimation(button);
+                AttachHoverAnimations(child);
+            }
+        }
+
+        void AttachHoverAnimation(ButtonBase button)
+        {
+            if (button.RenderTransform is not ScaleTransform)
+                button.RenderTransform = new ScaleTransform(1, 1);
+            button.RenderTransformOrigin = new Point(0.5, 0.5);
+
+            button.MouseEnter += (_, _) => AnimateScale(button, 1.018);
+            button.MouseLeave += (_, _) => AnimateScale(button, 1.0);
+            button.PreviewMouseDown += (_, _) => AnimateScale(button, 0.992);
+            button.PreviewMouseUp += (_, _) => AnimateScale(button, button.IsMouseOver ? 1.018 : 1.0);
+        }
+
+        static void AnimateScale(UIElement element, double scale)
+        {
+            var duration = TimeSpan.FromMilliseconds(95);
+            var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var x = new DoubleAnimation(scale, duration) { EasingFunction = easing };
+            var y = new DoubleAnimation(scale, duration) { EasingFunction = easing };
+            element.RenderTransform.BeginAnimation(ScaleTransform.ScaleXProperty, x);
+            element.RenderTransform.BeginAnimation(ScaleTransform.ScaleYProperty, y);
         }
 
         void RegisterCurrentHotkey()
@@ -478,18 +659,41 @@ namespace ClickerApp
             };
         }
 
-        void SetMouseMode(bool lmb, bool save = true)
+        void SetMouseButtons(bool left, bool right, bool save = true)
         {
-            BtnLmb.IsChecked = lmb;
-            BtnRmb.IsChecked = !lmb;
+            if (!left && !right) right = true;
 
-            BtnLmb.Background = lmb ? AccentBrush : SurfaceBrush;
-            BtnLmb.Foreground = lmb ? BgBrush : MutedBrush;
-            BtnRmb.Background = lmb ? SurfaceBrush : AccentBrush;
-            BtnRmb.Foreground = lmb ? MutedBrush : BgBrush;
+            BtnLmb.IsChecked = left;
+            BtnRmb.IsChecked = right;
 
-            lock (stateLock) clickLmb = lmb;
+            BtnLmb.Background = left ? AccentBrush : SurfaceBrush;
+            BtnLmb.Foreground = left ? BgBrush : MutedBrush;
+            BtnRmb.Background = right ? AccentBrush : SurfaceBrush;
+            BtnRmb.Foreground = right ? BgBrush : MutedBrush;
+
+            lock (stateLock)
+            {
+                clickLeft = left;
+                clickRight = right;
+            }
             UpdateMiniUi();
+            if (save && initialized) SaveConfig();
+        }
+
+        void SetRunMode(bool hold, bool save = true)
+        {
+            BtnStayMode.IsChecked = !hold;
+            BtnHoldMode.IsChecked = hold;
+            BtnStayMode.Background = !hold ? AccentBrush : SurfaceBrush;
+            BtnStayMode.Foreground = !hold ? BgBrush : MutedBrush;
+            BtnHoldMode.Background = hold ? AccentBrush : SurfaceBrush;
+            BtnHoldMode.Foreground = hold ? BgBrush : MutedBrush;
+
+            lock (stateLock) holdMode = hold;
+            holdActive = false;
+            physicalLeftDown = false;
+            physicalRightDown = false;
+            SetUi(running);
             if (save && initialized) SaveConfig();
         }
 
@@ -507,7 +711,9 @@ namespace ClickerApp
         {
             if (MiniMode == null || MiniCps == null || MiniHotkey == null) return;
 
-            MiniMode.Text = BtnLmb?.IsChecked == true ? "ЛКМ" : "ПКМ";
+            var left = BtnLmb?.IsChecked == true;
+            var right = BtnRmb?.IsChecked == true;
+            MiniMode.Text = left && right ? "ЛКМ+ПКМ" : left ? "ЛКМ" : "ПКМ";
             MiniCps.Text = $"{Math.Max(1, cps)} CPS";
             MiniHotkey.Text = HotkeyText();
             MiniMode.Foreground = AccentBrush;
@@ -569,6 +775,7 @@ namespace ClickerApp
                 FontWeight = FontWeights.Bold,
                 Cursor = Cursors.Hand
             };
+            AttachHoverAnimation(close);
             close.Click += (_, _) => win.Close();
             Grid.SetColumn(close, 1);
             header.Children.Add(close);
@@ -578,7 +785,9 @@ namespace ClickerApp
             win.Content = border;
             win.MouseLeftButtonDown += (_, e) =>
             {
-                if (e.OriginalSource is TextBox or ButtonBase or Slider) return;
+                if (e.OriginalSource is DependencyObject source &&
+                    (IsInside<TextBox>(source) || IsInside<ButtonBase>(source) || IsInside<Slider>(source)))
+                    return;
                 try { win.DragMove(); } catch { }
             };
             return win;
@@ -615,7 +824,7 @@ namespace ClickerApp
                         input.Background = SurfaceBrush;
                         input.Foreground = AccentBrush;
                         input.BorderBrush = LineBrush;
-                        input.CaretBrush = AccentBrush;
+                        input.CaretBrush = Brushes.Transparent;
                         break;
                     case "ChromeButton" when root is Button chrome:
                         chrome.Foreground = MutedBrush;
@@ -672,7 +881,7 @@ namespace ClickerApp
             AddColorRow(root, "Лінії", theme.Line, v => theme.Line = v);
 
             AddDivider(root);
-            AddSliderRow(root, "Розмір шрифту", "Застосовується одразу до елементів керування", 9, 18, fontSize, "",
+            AddSliderRow(root, "Розмір шрифту", "Застосовується одразу до елементів керування", 11, 18, fontSize, "",
                 value => { fontSize = value; ApplyTheme(); RefreshPopupTheme(win); SaveConfig(); });
 
             var buttons = new Grid { Margin = new Thickness(0, 12, 0, 0) };
@@ -683,7 +892,7 @@ namespace ClickerApp
             reset.Click += (_, _) =>
             {
                 theme = new ThemeConfig();
-                fontSize = 13;
+                fontSize = 14;
                 ApplyTheme();
                 RefreshPopupTheme(win);
                 SaveConfig();
@@ -703,17 +912,22 @@ namespace ClickerApp
             win.ShowDialog();
         }
 
-        Button DialogButton(string text, Brush bg, Brush fg) => new()
+        Button DialogButton(string text, Brush bg, Brush fg)
         {
-            Content = text,
-            Height = 40,
-            Background = bg,
-            Foreground = fg,
-            BorderThickness = new Thickness(0),
-            FontFamily = new FontFamily("Consolas"),
-            FontWeight = FontWeights.Bold,
-            Cursor = Cursors.Hand
-        };
+            var button = new Button
+            {
+                Content = text,
+                Height = 40,
+                Background = bg,
+                Foreground = fg,
+                BorderThickness = new Thickness(0),
+                FontFamily = new FontFamily("Consolas"),
+                FontWeight = FontWeights.Bold,
+                Cursor = Cursors.Hand
+            };
+            AttachHoverAnimation(button);
+            return button;
+        }
 
         void AddDivider(Panel root) =>
             root.Children.Add(new Border { Tag = "Line", Height = 1, Background = LineBrush, Margin = new Thickness(0, 10, 0, 10) });
@@ -742,6 +956,7 @@ namespace ClickerApp
                 BorderThickness = new Thickness(1),
                 Cursor = Cursors.Hand
             };
+            AttachHoverAnimation(swatch);
 
             swatch.Click += (_, _) =>
             {
@@ -811,7 +1026,7 @@ namespace ClickerApp
                 Background = SurfaceBrush,
                 Foreground = AccentBrush,
                 BorderBrush = LineBrush,
-                CaretBrush = AccentBrush,
+                CaretBrush = Brushes.Transparent,
                 FontFamily = new FontFamily("Consolas"),
                 FontWeight = FontWeights.Bold,
                 TextAlignment = TextAlignment.Right,
@@ -866,14 +1081,48 @@ namespace ClickerApp
         static int Clamp(int value, int min, int max) =>
             Math.Min(max, Math.Max(min, value));
 
+        void Window_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.OriginalSource is DependencyObject source && !IsInside<TextBox>(source))
+                Keyboard.ClearFocus();
+        }
+
         void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            if (e.OriginalSource is TextBox or ButtonBase or Slider) return;
+            if (e.OriginalSource is DependencyObject source &&
+                (IsInside<TextBox>(source) || IsInside<ButtonBase>(source) || IsInside<Slider>(source)))
+                return;
             try { DragMove(); } catch { }
         }
 
-        void MouseButton_Click(object sender, RoutedEventArgs e) =>
-            SetMouseMode(sender == BtnLmb);
+        static bool IsInside<T>(DependencyObject? source) where T : DependencyObject
+        {
+            while (source != null)
+            {
+                if (source is T) return true;
+                DependencyObject? parent = null;
+                try { parent = VisualTreeHelper.GetParent(source); } catch { }
+                source = parent ??
+                    (source as FrameworkElement)?.Parent ??
+                    (source as FrameworkContentElement)?.Parent;
+            }
+            return false;
+        }
+
+        void MouseButton_Click(object sender, RoutedEventArgs e)
+        {
+            var left = BtnLmb.IsChecked == true;
+            var right = BtnRmb.IsChecked == true;
+            if (!left && !right)
+            {
+                left = sender == BtnLmb;
+                right = sender == BtnRmb;
+            }
+            SetMouseButtons(left, right);
+        }
+
+        void RunMode_Click(object sender, RoutedEventArgs e) =>
+            SetRunMode(sender == BtnHoldMode);
 
         void TxtCps_LostFocus(object sender, RoutedEventArgs e)
         {
@@ -920,10 +1169,13 @@ namespace ClickerApp
         {
             public int Cps { get; set; } = 100;
             public string Mode { get; set; } = "RMB";
+            public bool? ClickLeft { get; set; }
+            public bool? ClickRight { get; set; }
+            public string RunMode { get; set; } = "Stay";
             public HotkeyConfig Hotkey { get; set; } = new();
             public AntiDetectConfig AntiDetect { get; set; } = new();
             public ThemeConfig Theme { get; set; } = new();
-            public int FontSize { get; set; } = 13;
+            public int FontSize { get; set; } = 14;
         }
 
         sealed class HotkeyConfig
